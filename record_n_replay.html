@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>自動録音・再生機能</title>
+  <style>
+    #volume-bars {
+      display: flex;
+      align-items: flex-end;
+      height: 256px;
+    }
+    .bar {
+      width: 5px;
+      background-color: lightblue;
+      margin-right: 1px;
+    }
+    #recording-status {
+      margin-top: 20px;
+      font-weight: bold;
+    }
+    .marker {
+      position: relative;
+      height: 100%;
+      width: 1px;
+      background-color: black;
+    }
+    .marker-label {
+      position: absolute;
+      top: 260px;
+      transform: translateX(-50%);
+      font-size: 12px;
+    }
+    #recognized-word {
+      margin-top: 10px;
+      font-weight: bold;
+    }
+    #recordings-list {
+      margin-top: 20px;
+    }
+    .recording-item {
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <button id="start">録音開始</button>
+  <button id="stop" disabled>録音停止</button>
+  <audio id="audio" controls></audio>
+  <div id="volume-bars"></div>
+  <div id="recording-status"></div>
+  <div id="recognized-word">認識された単語: <span id="recognized-word-display"></span></div>
+  <div id="recordings-list"></div>
+
+  <script>
+    const startButton = document.getElementById('start');
+    const stopButton = document.getElementById('stop');
+    const audioElement = document.getElementById('audio');
+    const volumeBars = document.getElementById('volume-bars');
+    const recordingStatus = document.getElementById('recording-status');
+    const recognizedWordDisplay = document.getElementById('recognized-word-display');
+    const recordingsList = document.getElementById('recordings-list');
+    let audioChunks = [];
+    let mediaRecorder;
+    let replayTimeout;
+    let recognition;
+    let recognitionRestartTimeout;
+
+    // Create 100 volume bars and add markers every 20 bars
+    for (let i = 0; i < 100; i++) {
+      const bar = document.createElement('div');
+      bar.classList.add('bar');
+      volumeBars.appendChild(bar);
+      if (i % 20 === 0) {
+        const marker = document.createElement('div');
+        marker.classList.add('marker');
+        volumeBars.appendChild(marker);
+        const label = document.createElement('div');
+        label.classList.add('marker-label');
+        label.textContent = i;
+        marker.appendChild(label);
+      }
+    }
+    const bars = document.getElementsByClassName('bar');
+
+    async function init() {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      const audioContext = new AudioContext();
+      const analyser = audioContext.createAnalyser();
+      const source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyser);
+      analyser.fftSize = 2048;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunks.push(event.data);
+      };
+
+      mediaRecorder.onstart = () => {
+        recordingStatus.textContent = "録音中...";
+        stopButton.disabled = false;
+        startButton.disabled = true;
+      };
+
+      mediaRecorder.onstop = () => {
+        recordingStatus.textContent = "録音停止";
+        stopButton.disabled = true;
+        startButton.disabled = false;
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        const audioURL = URL.createObjectURL(audioBlob);
+
+        // Create a new audio element for the recorded audio
+        const recordingItem = document.createElement('div');
+        recordingItem.classList.add('recording-item');
+        const recordedAudio = document.createElement('audio');
+        recordedAudio.controls = true;
+        recordedAudio.src = audioURL;
+        const downloadLink = document.createElement('a');
+        downloadLink.href = audioURL;
+        downloadLink.download = `recording_${new Date().toISOString()}.webm`;
+        downloadLink.textContent = 'Download';
+
+        recordingItem.appendChild(recordedAudio);
+        recordingItem.appendChild(downloadLink);
+        recordingsList.appendChild(recordingItem);
+
+        // Set the main audio element to the latest recording for replay
+        audioElement.src = audioURL;
+        audioChunks = [];
+
+        // Start replay after 1 second delay
+        setTimeout(() => {
+          audioElement.play();
+          audioElement.onended = () => {
+            replayAudioIfNeeded();
+          };
+        }, 1000);
+      };
+
+      setupSpeechRecognition(stream);
+      detectSound(analyser);
+    }
+
+    function setupSpeechRecognition(stream) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[event.results.length - 1][0].transcript.trim().toLowerCase();
+        recognizedWordDisplay.textContent = transcript;
+        if (transcript.includes('action') && mediaRecorder.state === 'inactive') {
+          if (!audioElement.paused) {
+            audioElement.pause();
+          }
+          mediaRecorder.start();
+          recognizedWordDisplay.textContent = '';
+        } else if (transcript.includes('cut') && mediaRecorder.state === 'recording') {
+          mediaRecorder.stop();
+          recognizedWordDisplay.textContent = '';
+        }
+      };
+
+      recognition.onend = () => {
+        restartRecognition();
+      };
+
+      // Split the playback of the recorded segment and voice recognition input
+      const audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(stream);
+      const destination = audioContext.createMediaStreamDestination();
+      source.connect(destination);
+      recognition.start();
+    }
+
+    function restartRecognition() {
+      clearTimeout(recognitionRestartTimeout);
+      recognitionRestartTimeout = setTimeout(() => {
+        if (recognition && recognition.continuous) {
+          recognition.start();
+        }
+      }, 1000);
+    }
+
+    function detectSound(analyser) {
+      function updateVolumeBars() {
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(dataArray);
+
+        for (let i = 0; i < bars.length; i++) {
+          bars[i].style.height = `${dataArray[i]}px`;
+        }
+
+        requestAnimationFrame(updateVolumeBars);
+      }
+
+      updateVolumeBars();
+    }
+
+    function replayAudioIfNeeded() {
+      replayTimeout = setTimeout(() => {
+        if (audioElement.src && audioElement.paused) {
+          audioElement.play();
+        }
+      }, 1000);
+    }
+
+    startButton.addEventListener('click', () => {
+      init();
+    });
+
+    stopButton.addEventListener('click', () => {
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+      }
+    });
+  </script>
+</body>
+</html>
