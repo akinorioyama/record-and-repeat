@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>自動録音・再生機能</title>
+  <title>Record'n replay</title>
   <style>
     #volume-bars {
       display: flex;
@@ -43,17 +43,17 @@
   </style>
 </head>
 <body>
-  <button id="start">録音開始</button>
-  <button id="stop" disabled>録音停止</button>
-  <audio id="audio" controls></audio>
+  <button id="start">Activate listening to start recording</button>
+  <div id="terms_to_use_chrome">Use Chrome Browser for tested voice recognition.</div>
+  <div id="terms_to_speech_recognition">Pressing "Activate" will start sending audio data to browser vendors such as Google. Exit this screen if you don't agree on the terms and functions explained here (<a href="https://developer.chrome.com/blog/voice-driven-web-apps-introduction-to-the-web-speech-api"></a>Voice driven web apps - Introduction to the Web Speech API )</div>
   <div id="volume-bars"></div>
-  <div id="recording-status"></div>
-  <div id="recognized-word">認識された単語: <span id="recognized-word-display"></span></div>
-  <div id="recordings-list"></div>
+  <div id="recording-status">Recording not started</div>
+  <div id="recognized-word">Detected words in audio: <span id="recognized-word-display"></span></div>
+  <audio id="audio" controls></audio>
+  <div id="recordings-list">History of recordings</div>
 
   <script>
     const startButton = document.getElementById('start');
-    const stopButton = document.getElementById('stop');
     const audioElement = document.getElementById('audio');
     const volumeBars = document.getElementById('volume-bars');
     const recordingStatus = document.getElementById('recording-status');
@@ -83,6 +83,10 @@
     const bars = document.getElementsByClassName('bar');
 
     async function init() {
+      if (alert("Voice data will be sent to Google's server. If you agree on the condition, press 'Ok'")==true){
+        return false;
+      }
+      startButton.disabled = true;
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaRecorder = new MediaRecorder(stream);
       const audioContext = new AudioContext();
@@ -96,15 +100,11 @@
       };
 
       mediaRecorder.onstart = () => {
-        recordingStatus.textContent = "録音中...";
-        stopButton.disabled = false;
-        startButton.disabled = true;
+        recordingStatus.textContent = "Recording audio...";
       };
 
       mediaRecorder.onstop = () => {
-        recordingStatus.textContent = "録音停止";
-        stopButton.disabled = true;
-        startButton.disabled = false;
+        recordingStatus.textContent = "Recording stopped";
         const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
         const audioURL = URL.createObjectURL(audioBlob);
 
@@ -127,13 +127,13 @@
         audioElement.src = audioURL;
         audioChunks = [];
 
-        // Start replay after 1 second delay
+        // Start replay after 0.1 second delay
         setTimeout(() => {
           audioElement.play();
           audioElement.onended = () => {
             replayAudioIfNeeded();
           };
-        }, 1000);
+        }, 100);
       };
 
       setupSpeechRecognition(stream);
@@ -150,10 +150,8 @@
       recognition.onresult = (event) => {
         const transcript = event.results[event.results.length - 1][0].transcript.trim().toLowerCase();
         recognizedWordDisplay.textContent = transcript;
-        if (transcript.includes('action') && mediaRecorder.state === 'inactive') {
-          if (!audioElement.paused) {
-            audioElement.pause();
-          }
+        if ((transcript.includes('action') && !transcript.includes('cut')) && mediaRecorder.state === 'inactive') {
+          audioElement.pause();
           mediaRecorder.start();
           recognizedWordDisplay.textContent = '';
         } else if (transcript.includes('cut') && mediaRecorder.state === 'recording') {
@@ -180,7 +178,7 @@
         if (recognition && recognition.continuous) {
           recognition.start();
         }
-      }, 1000);
+      }, 100);
     }
 
     function detectSound(analyser) {
